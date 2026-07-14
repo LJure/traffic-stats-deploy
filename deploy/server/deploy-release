@@ -40,7 +40,20 @@ readonly FRONTEND="$SOURCE/frontend.tar.gz"
 [[ -L "$CURRENT" ]] || die "current 发布链接不存在，请先执行 bootstrap-release-layout"
 [[ -f "$BINARY" && -s "$BINARY" ]] || die "缺少后端二进制"
 [[ -f "$FRONTEND" && -s "$FRONTEND" ]] || die "缺少前端构建包"
-[[ ! -e "$TARGET" ]] || die "该提交已存在发布目录"
+
+# 同一提交可能因 GitHub Actions 的手动重试再次上传。若它已是当前版本，
+# 无需重启服务，清理这次重复上传后直接成功；若 current 指向其他版本，
+# 则保留原有的拒绝覆盖策略，避免覆盖历史 release 或半成品目录。
+current_release="$(readlink -f "$CURRENT")"
+[[ -d "$current_release" ]] || die "current 未指向有效发布目录"
+if [[ -e "$TARGET" ]]; then
+  if [[ "$current_release" == "$TARGET" ]]; then
+    rm -rf -- "$SOURCE"
+    echo "提交 $release_id 已是当前版本，无需重复发布"
+    exit 0
+  fi
+  die "该提交已存在发布目录，但不是当前运行版本"
+fi
 
 # 完整解包且确认入口文件后才切换 current，避免半成品被服务读取。
 install -d -o root -g root -m 0755 "$TARGET/public"
@@ -52,8 +65,7 @@ if find "$TARGET/public" -type l -print -quit | grep -q .; then
 fi
 
 # 保存当前目标，在服务或 HTTP 健康检查失败时切回这一版本。
-previous="$(readlink -f "$CURRENT")"
-[[ -d "$previous" ]] || die "current 未指向有效发布目录"
+previous="$current_release"
 ln -s "$TARGET" "$NEXT"
 mv -Tf "$NEXT" "$CURRENT"
 
