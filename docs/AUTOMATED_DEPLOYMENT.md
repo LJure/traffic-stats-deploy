@@ -11,7 +11,7 @@
 /usr/local/lib/traffic-stats-go/bin/deploy-release     # 受限 sudo 可调用的发布脚本
 ```
 
-`traffic-stats-go.service` 始终从 `current` 读取二进制与静态前端。发布脚本先完整解包到新的 release 目录，再原子替换 `current`，重启服务后最多等待十秒，再请求 `/api/v1/status` 确认 API 与数据库文件可用。若启动或该检查失败，脚本会原子地切回前一个 release 并重启服务。采集器短暂滞后不会单独触发代码回滚。
+`traffic-stats-go.service` 始终从 `current` 读取二进制与静态前端。发布脚本先完整解包到新的 release 目录，再原子替换 `current`，重启服务后最多等待十秒，再请求 `/api/v1/status` 确认 API 与数据库文件可用。若启动或该检查失败，脚本会原子地切回前一个 release 并重启服务。采集器短暂滞后不会单独触发代码回滚。同一 commit 已经是 `current` 时，手动重试会校验上传产物、清理重复上传并成功结束；若该 commit 的 release 存在但并非 `current`，脚本仍会拒绝覆盖。
 
 ## 首次服务器迁移
 
