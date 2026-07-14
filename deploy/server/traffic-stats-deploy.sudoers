@@ -1,0 +1,2 @@
+# GitHub Actions 只能通过根属主脚本发布一个严格校验过的 commit 标识。
+trafficdeploy ALL=(root) NOPASSWD: /usr/local/lib/traffic-stats-go/bin/deploy-release *

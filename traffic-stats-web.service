@@ -1,0 +1,19 @@
+[Unit]
+Description=Local read-only device traffic status page
+After=traffic-stats-collect.service
+
+[Service]
+Type=simple
+ExecStart=/usr/local/lib/traffic-stats/web.py
+User=trafficstats
+Group=trafficstats
+Restart=on-failure
+RestartSec=5s
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectHome=true
+ProtectSystem=full
+ReadOnlyPaths=/usr/local/lib/traffic-stats /var/lib/traffic-stats
+
+[Install]
+WantedBy=multi-user.target

@@ -1,0 +1,12 @@
+[Unit]
+Description=Run the 3x-ui traffic collector every minute
+
+[Timer]
+OnCalendar=*-*-* *:*:00
+Persistent=true
+RandomizedDelaySec=5s
+AccuracySec=1s
+Unit=traffic-stats-collect.service
+
+[Install]
+WantedBy=timers.target

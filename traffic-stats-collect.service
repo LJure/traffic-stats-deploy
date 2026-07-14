@@ -1,0 +1,16 @@
+[Unit]
+Description=Collect per-device 3x-ui traffic counters
+After=x-ui.service
+
+[Service]
+Type=oneshot
+ExecStart=/usr/local/lib/traffic-stats/collector.py
+User=root
+Group=trafficstats
+UMask=0027
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectHome=true
+ProtectSystem=full
+ReadOnlyPaths=/etc/x-ui/x-ui.db /etc/x-ui/x-ui.db-wal /etc/x-ui/x-ui.db-shm
+ReadWritePaths=/var/lib/traffic-stats

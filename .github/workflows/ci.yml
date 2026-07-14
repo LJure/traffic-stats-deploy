@@ -1,0 +1,61 @@
+name: 持续集成
+
+on:
+  # PR 在合并前必须完成与生产相同的前后端构建验证。
+  pull_request:
+    branches: [main]
+  # main 合并后再次验证，为后续部署工作流提供可信构建结果。
+  push:
+    branches: [main]
+  # 保留手动触发入口，便于排查依赖或平台兼容性问题。
+  workflow_dispatch:
+
+# CI 只读取仓库内容，不授予写入仓库或发布凭据的权限。
+permissions:
+  contents: read
+
+# 同一分支只保留最新一次验证，避免过期提交占用 Actions 配额。
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  backend:
+    name: Go 后端验证
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: backend
+    steps:
+      - name: 取出源码
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5
+      - name: 配置 Go
+        uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff
+        with:
+          go-version-file: backend/go.mod
+          cache-dependency-path: backend/go.sum
+      - name: 执行单元测试
+        run: go test ./...
+      - name: 执行静态检查
+        run: go vet ./...
+
+  frontend:
+    name: Vue 前端构建
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: frontend
+    steps:
+      - name: 取出源码
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5
+      - name: 配置 Node.js
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+      # npm ci 使用锁文件安装，确保 CI 与可部署构建的依赖版本一致。
+      - name: 安装锁定依赖
+        run: npm ci
+      - name: 构建生产前端
+        run: npm run build

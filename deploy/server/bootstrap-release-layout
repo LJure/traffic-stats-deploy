@@ -1,0 +1,43 @@
+#!/usr/bin/env bash
+# 首次迁移：将现有 8788 服务纳入 releases/current 布局，不改变其二进制或前端内容。
+set -Eeuo pipefail
+
+readonly ROOT=/usr/local/lib/traffic-stats-go
+readonly RELEASES="$ROOT/releases"
+readonly CURRENT="$ROOT/current"
+readonly SERVICE=traffic-stats-go
+readonly STATUS_URL=http://127.0.0.1:8788/api/v1/status
+
+# wait_for_api 最多等待十秒，允许 Gin 在 systemd 重启后完成监听与数据库打开。
+wait_for_api() {
+  local attempt
+  for attempt in {1..10}; do
+    if curl --fail --silent --show-error --max-time 2 "$STATUS_URL" | grep -q '"databaseAvailable":true'; then
+      return 0
+    fi
+    sleep 1
+  done
+  return 1
+}
+
+[[ $(id -u) -eq 0 ]] || { echo "必须以 root 执行" >&2; exit 1; }
+[[ -x "$ROOT/traffic-stats-api" ]] || { echo "找不到现有 Gin 二进制" >&2; exit 1; }
+[[ -f "$ROOT/public/index.html" ]] || { echo "找不到现有前端入口" >&2; exit 1; }
+
+install -d -o root -g root -m 0755 "$RELEASES" "$ROOT/bin"
+if [[ ! -e "$CURRENT" ]]; then
+  # 复制现有内容而非重新构建，确保首次切换可回退到当前已验证版本。
+  legacy="legacy-$(date -u +%Y%m%dT%H%M%SZ)"
+  target="$RELEASES/$legacy"
+  install -d -o root -g root -m 0755 "$target/public"
+  install -o root -g root -m 0755 "$ROOT/traffic-stats-api" "$target/traffic-stats-api"
+  cp -a "$ROOT/public/." "$target/public/"
+  ln -s "$target" "$CURRENT"
+fi
+
+# systemd 单元改为经 current 启动；服务重启后仍应提供同一份已验证内容。
+systemctl daemon-reload
+systemctl restart "$SERVICE"
+systemctl is-active --quiet "$SERVICE"
+wait_for_api
+echo "release 布局已就绪：$(readlink -f "$CURRENT")"

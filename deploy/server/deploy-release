@@ -1,0 +1,83 @@
+#!/usr/bin/env bash
+# 由 trafficdeploy 通过受限 sudo 调用：将一个已上传的 commit 发布到 Gin 服务，并在健康检查失败时回滚。
+set -Eeuo pipefail
+
+readonly ROOT=/usr/local/lib/traffic-stats-go
+readonly RELEASES="$ROOT/releases"
+readonly CURRENT="$ROOT/current"
+readonly NEXT="$ROOT/current.next"
+readonly INCOMING=/var/lib/traffic-stats-deploy/incoming
+readonly SERVICE=traffic-stats-go
+readonly STATUS_URL=http://127.0.0.1:8788/api/v1/status
+
+# die 统一输出发布失败原因，便于 GitHub Actions 日志直接定位。
+die() {
+  echo "发布失败：$*" >&2
+  exit 1
+}
+
+# wait_for_api 最多等待十秒，避免服务刚重启时尚未开始监听而触发错误回滚。
+wait_for_api() {
+  local attempt
+  for attempt in {1..10}; do
+    if curl --fail --silent --show-error --max-time 2 "$STATUS_URL" | grep -q '"databaseAvailable":true'; then
+      return 0
+    fi
+    sleep 1
+  done
+  return 1
+}
+
+# release_id 只接受完整小写 Git commit SHA，防止参数影响服务器文件路径。
+release_id="${1:-}"
+[[ $# -eq 1 && "$release_id" =~ ^[0-9a-f]{40}$ ]] || die "发布标识必须是 40 位小写 commit SHA"
+
+readonly SOURCE="$INCOMING/$release_id"
+readonly TARGET="$RELEASES/$release_id"
+readonly BINARY="$SOURCE/traffic-stats-api"
+readonly FRONTEND="$SOURCE/frontend.tar.gz"
+
+[[ -L "$CURRENT" ]] || die "current 发布链接不存在，请先执行 bootstrap-release-layout"
+[[ -f "$BINARY" && -s "$BINARY" ]] || die "缺少后端二进制"
+[[ -f "$FRONTEND" && -s "$FRONTEND" ]] || die "缺少前端构建包"
+[[ ! -e "$TARGET" ]] || die "该提交已存在发布目录"
+
+# 完整解包且确认入口文件后才切换 current，避免半成品被服务读取。
+install -d -o root -g root -m 0755 "$TARGET/public"
+install -o root -g root -m 0755 "$BINARY" "$TARGET/traffic-stats-api"
+tar --extract --gzip --file "$FRONTEND" --directory "$TARGET/public" --no-same-owner --no-same-permissions
+[[ -f "$TARGET/public/index.html" ]] || die "前端构建包缺少 index.html"
+if find "$TARGET/public" -type l -print -quit | grep -q .; then
+  die "前端构建包不能包含符号链接"
+fi
+
+# 保存当前目标，在服务或 HTTP 健康检查失败时切回这一版本。
+previous="$(readlink -f "$CURRENT")"
+[[ -d "$previous" ]] || die "current 未指向有效发布目录"
+ln -s "$TARGET" "$NEXT"
+mv -Tf "$NEXT" "$CURRENT"
+
+# rollback 将 current 原子切回并恢复服务；即使恢复失败也保留原始错误退出。
+rollback() {
+  echo "新版本健康检查失败，正在回滚到 $previous" >&2
+  ln -s "$previous" "$NEXT"
+  mv -Tf "$NEXT" "$CURRENT"
+  systemctl restart "$SERVICE" || true
+}
+
+if ! systemctl restart "$SERVICE"; then
+  rollback
+  die "服务无法启动"
+fi
+if ! systemctl is-active --quiet "$SERVICE"; then
+  rollback
+  die "服务未处于 active 状态"
+fi
+if ! wait_for_api; then
+	rollback
+	die "状态接口或数据库可用性检查失败"
+fi
+
+# 仅在新版本完全可用后删除上传临时目录，保留 releases 以支持人工回退。
+rm -rf -- "$SOURCE"
+echo "已发布 $release_id；上一版本为 $previous"

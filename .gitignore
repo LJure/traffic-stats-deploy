@@ -1,0 +1,22 @@
+# Python bytecode
+__pycache__/
+*.py[cod]
+
+# Captured production data: retained locally for regression checks only.
+docs/baseline/online-*/
+
+# Historical duplicate source archive
+traffic-stats-source-*.zip
+
+# Go build outputs
+backend/bin/
+backend/traffic-stats-api
+backend/traffic-stats-api.exe
+
+# Future frontend build and dependency outputs
+frontend/node_modules/
+frontend/dist/
+
+# Editor and operating-system files
+.DS_Store
+Thumbs.db

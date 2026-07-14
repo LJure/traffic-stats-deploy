@@ -1,0 +1,97 @@
+name: 生产部署
+
+on:
+  # 仅 main 的合并提交会自动发布；PR 始终只运行 ci.yml。
+  push:
+    branches: [main]
+  # 保留 main 上的手动入口，便于在不改代码时重试一次失败发布。
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+# 生产服务一次只能处理一个发布，后续提交排队而不取消已开始的服务切换。
+concurrency:
+  group: traffic-stats-production
+  cancel-in-progress: false
+
+jobs:
+  build:
+    # workflow_dispatch 可从任意分支发起，因此在任务层再次限制到 main。
+    if: github.ref == 'refs/heads/main'
+    name: 构建可发布产物
+    runs-on: ubuntu-latest
+    steps:
+      - name: 取出 main 源码
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5
+      - name: 配置 Go
+        uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff
+        with:
+          go-version-file: backend/go.mod
+          cache-dependency-path: backend/go.sum
+      - name: 验证 Go 后端
+        working-directory: backend
+        run: |
+          go test ./...
+          go vet ./...
+      - name: 配置 Node.js
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+      - name: 构建 Vue 前端
+        working-directory: frontend
+        run: |
+          npm ci
+          npm run build
+      - name: 打包 Linux 后端与静态前端
+        run: |
+          mkdir -p release
+          cd backend
+          GOOS=linux GOARCH=amd64 go build -trimpath -o ../release/traffic-stats-api ./cmd/server
+          cd ../frontend/dist
+          tar --create --gzip --file ../../release/frontend.tar.gz .
+          cd ../../release
+          sha256sum traffic-stats-api frontend.tar.gz > checksums.txt
+      # 仅在当前工作流内传递产物，避免 GitHub 产物长期保存可部署二进制。
+      - name: 上传短期发布产物
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: traffic-stats-${{ github.sha }}
+          path: release/
+          if-no-files-found: error
+          retention-days: 1
+
+  deploy:
+    if: github.ref == 'refs/heads/main'
+    name: 发布到 8788
+    needs: build
+    runs-on: ubuntu-latest
+    steps:
+      - name: 下载已验证产物
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093
+        with:
+          name: traffic-stats-${{ github.sha }}
+          path: release
+      - name: 配置受限 SSH 连接
+        env:
+          DEPLOY_KNOWN_HOSTS: ${{ secrets.DEPLOY_KNOWN_HOSTS }}
+          DEPLOY_SSH_PRIVATE_KEY: ${{ secrets.DEPLOY_SSH_PRIVATE_KEY }}
+        run: |
+          install -d -m 0700 ~/.ssh
+          printf '%s\n' "$DEPLOY_SSH_PRIVATE_KEY" > ~/.ssh/id_ed25519
+          printf '%s\n' "$DEPLOY_KNOWN_HOSTS" > ~/.ssh/known_hosts
+          chmod 0600 ~/.ssh/id_ed25519 ~/.ssh/known_hosts
+      - name: 上传、校验并原子发布
+        env:
+          DEPLOY_HOST: ${{ secrets.DEPLOY_HOST }}
+          DEPLOY_PORT: ${{ secrets.DEPLOY_PORT }}
+          DEPLOY_USER: ${{ secrets.DEPLOY_USER }}
+          RELEASE_ID: ${{ github.sha }}
+        run: |
+          remote="${DEPLOY_USER}@${DEPLOY_HOST}"
+          incoming="/var/lib/traffic-stats-deploy/incoming/${RELEASE_ID}"
+          ssh -p "$DEPLOY_PORT" "$remote" "mkdir -p '$incoming'"
+          scp -P "$DEPLOY_PORT" release/traffic-stats-api release/frontend.tar.gz release/checksums.txt "$remote:$incoming/"
+          ssh -p "$DEPLOY_PORT" "$remote" "cd '$incoming' && sha256sum --check checksums.txt && sudo /usr/local/lib/traffic-stats-go/bin/deploy-release '$RELEASE_ID'"

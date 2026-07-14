@@ -1,0 +1,22 @@
+[Unit]
+Description=Gin API for the local device traffic dashboard
+After=network.target traffic-stats-collect.service
+
+[Service]
+Type=simple
+User=trafficstats
+Group=trafficstats
+Environment=TRAFFIC_STATS_DB=/var/lib/traffic-stats/traffic.sqlite3
+Environment=TRAFFIC_STATS_LISTEN=127.0.0.1:8788
+Environment=TRAFFIC_STATS_STATIC_DIR=/usr/local/lib/traffic-stats-go/current/public
+ExecStart=/usr/local/lib/traffic-stats-go/current/traffic-stats-api
+Restart=on-failure
+RestartSec=5s
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectHome=true
+ProtectSystem=full
+ReadOnlyPaths=/usr/local/lib/traffic-stats-go /var/lib/traffic-stats
+
+[Install]
+WantedBy=multi-user.target

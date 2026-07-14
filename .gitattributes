@@ -1,0 +1,2 @@
+# The deployment target is Linux; preserve LF in every tracked text file.
+* text=auto eol=lf
