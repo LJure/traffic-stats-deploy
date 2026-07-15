@@ -1,11 +1,11 @@
-# Gin API（第二阶段）
+# Gin API
 
-本目录只替换统计 Web 层；现有 Python `collector.py`、systemd timer 与 SQLite 表结构保持不变。
+Gin API 读取现有 Python `collector.py` 与 systemd timer 持续写入的 SQLite 数据库；采集器、timer 与数据库表结构是当前生产方案的一部分。
 
 ## 本地运行
 
 ```powershell
-$env:TRAFFIC_STATS_DB = "..\\docs\\baseline\\online-2026-07-14T1049Z\\files\\tmp\\traffic-stats-baseline.sqlite3"
+$env:TRAFFIC_STATS_DB = "C:\\path\\to\\traffic.sqlite3"
 $env:TRAFFIC_STATS_LISTEN = "127.0.0.1:8788"
 go run -buildvcs=false ./cmd/server
 ```
@@ -20,8 +20,8 @@ go run -buildvcs=false ./cmd/server
 
 `/api/v1/status` 在每次请求时读取采集器落盘的 SQLite 数据库文件元数据，返回 `databaseBytes` 与 `databaseAvailable`，不写回数据库。`healthy` 仅在数据库文件可用且最近一次采集不超过三分钟时为 `true`。
 
-数据库以 SQLite `mode=ro` 打开，并设置 5 秒 busy timeout。生产部署仍须只监听 `127.0.0.1`；静态前端托管和 systemd 单元将在后续阶段加入。
+数据库以 SQLite `mode=ro` 打开，并设置 5 秒 busy timeout。生产部署仅监听 `127.0.0.1`，由前置代理提供外部访问。
 
-## 预备 systemd 单元
+## systemd 单元
 
-[`systemd/traffic-stats-go.service`](systemd/traffic-stats-go.service) 是灰度服务单元：它固定监听 `127.0.0.1:8788`，不会占用现有 Python 页面使用的 `8787`。本阶段只提交该文件，不会安装、启用或重启任何 VPS 服务。
+[`systemd/traffic-stats-go.service`](systemd/traffic-stats-go.service) 是生产服务单元，固定监听 `127.0.0.1:8788`，依赖采集服务提供的 SQLite 数据库。

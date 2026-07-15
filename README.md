@@ -9,7 +9,6 @@
 - `frontend/`：Vue 仪表盘前端。
 - `deploy/`：版本化发布、健康检查与自动回滚脚本。
 - `traffic-stats-collect.service`、`traffic-stats-collect.timer`：采集器 systemd 配置。
-- `traffic-stats-web.service`、`web.py`：保留的旧版 Python 页面实现，仅用于兼容与回退。
 
 ## 开发与部署
 
