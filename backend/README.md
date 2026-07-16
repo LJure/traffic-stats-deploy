@@ -9,7 +9,7 @@ Gin API 读取现有 Python `collector.py` 与 systemd timer 持续写入的 SQL
 ```powershell
 $devDb = "$env:USERPROFILE\traffic-stats-dev\traffic.sqlite3"
 New-Item -ItemType Directory -Force (Split-Path $devDb) | Out-Null
-scp -i "D:\Downloads\DMIT-luv-id_rsa\id_rsa.pem" root@<VPS_HOST>:/var/lib/traffic-stats/traffic.sqlite3 $devDb
+scp -i "<SSH_PRIVATE_KEY_PATH>" root@<VPS_HOST>:/var/lib/traffic-stats/traffic.sqlite3 $devDb
 Test-Path $devDb
 ```
 
