@@ -4,11 +4,24 @@ Gin API 读取现有 Python `collector.py` 与 systemd timer 持续写入的 SQL
 
 ## 本地运行
 
+`C:\\path\\to\\traffic.sqlite3` 是示例占位路径，不是仓库自带文件。生产统计数据库不纳入 Git；要运行完整仪表盘，先复制一份数据库快照到本机并把环境变量指向该实际文件：
+
 ```powershell
-$env:TRAFFIC_STATS_DB = "C:\\path\\to\\traffic.sqlite3"
+$devDb = "$env:USERPROFILE\traffic-stats-dev\traffic.sqlite3"
+New-Item -ItemType Directory -Force (Split-Path $devDb) | Out-Null
+scp -i "D:\Downloads\DMIT-luv-id_rsa\id_rsa.pem" root@<VPS_HOST>:/var/lib/traffic-stats/traffic.sqlite3 $devDb
+Test-Path $devDb
+```
+
+随后在 `backend/` 目录运行：
+
+```powershell
+$env:TRAFFIC_STATS_DB = "$env:USERPROFILE\traffic-stats-dev\traffic.sqlite3"
 $env:TRAFFIC_STATS_LISTEN = "127.0.0.1:8788"
 go run -buildvcs=false ./cmd/server
 ```
+
+本地文件是复制时刻的只读数据快照；要查看新采集数据，重新执行一次 `scp`。如果只需验证后端逻辑而不启动页面，运行 `go test ./...` 即可，测试会自动创建脱敏临时数据库。
 
 接口：
 
