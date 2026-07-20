@@ -1,5 +1,5 @@
 [Unit]
-Description=Run the 3x-ui traffic collector every minute
+Description=Run the sing-box traffic collector every minute
 
 [Timer]
 OnCalendar=*-*-* *:*:00
