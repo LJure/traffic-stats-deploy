@@ -1,16 +1,30 @@
 #!/usr/bin/env python3
-"""Store a minute-by-minute, read-only snapshot of 3x-ui client traffic."""
+"""Persist per-device sing-box traffic counters collected by nftables."""
 
+import json
 import sqlite3
+import subprocess
 import sys
 import time
 from datetime import datetime
 from pathlib import Path
 from zoneinfo import ZoneInfo
 
-XUI_DB = "file:/etc/x-ui/x-ui.db?mode=ro"
 STATE_DIR = Path("/var/lib/traffic-stats")
 STATE_DB = STATE_DIR / "traffic.sqlite3"
+NFT_TABLE = ("inet", "traffic_stats")
+
+# Keep the original 3x-ui composite identities so historical dashboard rows and
+# new sing-box rows continue to aggregate into the same device cards.
+DEVICES = {
+    "windows-LUV": (1, 1, "windows-LUV", "windows pc"),
+    "xiaomi-pad7-pro": (2, 1, "xiaomi-pad7-pro", "Android"),
+    "iPhone17": (3, 1, "iPhone17", "iOS"),
+    # The authentication name was intentionally kept as deployed in sing-box.
+    "xiaomi-tubro4-pro": (4, 1, "xiaomi-turbo4", "Android"),
+}
+
+
 def init_db(con):
     con.executescript(
         """
@@ -57,31 +71,43 @@ def init_db(con):
     )
 
 
-def read_xui():
-    con = sqlite3.connect(XUI_DB, uri=True)
-    try:
-        return con.execute(
-            """
-            SELECT c.id, ci.inbound_id, c.email, COALESCE(c.comment, ''),
-                   COALESCE(t.up, 0), COALESCE(t.down, 0)
-            FROM clients AS c
-            JOIN client_inbounds AS ci ON ci.client_id = c.id
-            JOIN inbounds AS i ON i.id = ci.inbound_id
-            LEFT JOIN client_traffics AS t
-                ON t.inbound_id = ci.inbound_id AND t.email = c.email
-            WHERE c.enable = 1 AND i.enable = 1
-            ORDER BY c.id, ci.inbound_id
-            """
-        ).fetchall()
-    finally:
-        con.close()
+def read_nft_counters():
+    result = subprocess.run(
+        ["/usr/sbin/nft", "--json", "list", "table", *NFT_TABLE],
+        check=True,
+        capture_output=True,
+        text=True,
+    )
+    document = json.loads(result.stdout)
+    totals = {device: {"upload": 0, "download": 0} for device in DEVICES}
+    found = set()
+    for item in document.get("nftables", []):
+        rule = item.get("rule")
+        if not rule:
+            continue
+        comment = rule.get("comment", "")
+        if not comment.startswith("traffic-stats:"):
+            continue
+        _, device, direction = comment.split(":", 2)
+        if device not in totals or direction not in totals[device]:
+            raise RuntimeError(f"unexpected nft counter comment: {comment}")
+        counter = next(
+            (expression["counter"] for expression in rule.get("expr", []) if "counter" in expression),
+            None,
+        )
+        if counter is None:
+            raise RuntimeError(f"nft rule has no counter: {comment}")
+        totals[device][direction] = int(counter["bytes"])
+        found.add((device, direction))
+    expected = {(device, direction) for device in DEVICES for direction in ("upload", "download")}
+    if found != expected:
+        missing = ", ".join(f"{device}/{direction}" for device, direction in sorted(expected - found))
+        raise RuntimeError(f"missing nft traffic counters: {missing}")
+    return totals
 
 
 def main():
-    rows = read_xui()
-    if not rows:
-        raise RuntimeError("3x-ui returned no active client traffic rows")
-
+    counters = read_nft_counters()
     STATE_DIR.mkdir(mode=0o750, parents=True, exist_ok=True)
     now = int(time.time())
     con = sqlite3.connect(STATE_DB)
@@ -92,10 +118,10 @@ def main():
         five_min_deltas = []
         day = datetime.fromtimestamp(now, ZoneInfo("Asia/Shanghai")).date().isoformat()
         five_min_bucket = now - (now % 300)
-        for client_id, inbound_id, email, comment, up, down in rows:
-            # In 3x-ui, email identifies the device and comment describes its type.
-            label = comment or email
-            up, down = int(up), int(down)
+        for auth_name, (client_id, inbound_id, email, label) in DEVICES.items():
+            # nft upload is client -> destination traffic; download is the reverse.
+            up = counters[auth_name]["upload"]
+            down = counters[auth_name]["download"]
             previous = con.execute(
                 """
                 SELECT up_bytes, down_bytes FROM samples
@@ -106,12 +132,10 @@ def main():
             ).fetchone()
             if previous:
                 previous_up, previous_down = previous
-                # A lower counter means 3x-ui reset it; start the new counter segment.
+                # nftables counters restart after reboot or a rules reload.
                 delta_up = up - previous_up if up >= previous_up else up
                 delta_down = down - previous_down if down >= previous_down else down
-                daily_deltas.append(
-                    (day, client_id, inbound_id, email, label, delta_up, delta_down)
-                )
+                daily_deltas.append((day, client_id, inbound_id, email, label, delta_up, delta_down))
                 five_min_deltas.append(
                     (five_min_bucket, client_id, inbound_id, email, label, delta_up, delta_down)
                 )
@@ -154,15 +178,13 @@ def main():
             "INSERT OR REPLACE INTO collector_state(key, value) VALUES ('last_success', ?)",
             (str(now),),
         )
-        # Keep detailed samples for 30 days. Rollups will be added before this expires.
         con.execute("DELETE FROM samples WHERE captured_at < ?", (now - 30 * 86400,))
-        # Keep 5-minute aggregates for about six months; daily totals remain indefinitely.
         con.execute("DELETE FROM five_min_usage WHERE bucket_at < ?", (now - 183 * 86400,))
         con.commit()
     finally:
         con.close()
 
-    print(f"captured {len(rows)} active client rows at {now}")
+    print(f"captured {len(DEVICES)} sing-box device counters at {now}")
 
 
 if __name__ == "__main__":

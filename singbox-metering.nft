@@ -1,0 +1,26 @@
+destroy table inet traffic_stats
+
+table inet traffic_stats {
+	chain output {
+		type filter hook output priority mangle; policy accept;
+
+		meta mark 0x4311 ct mark set meta mark
+		meta mark 0x4311 counter comment "traffic-stats:windows-LUV:upload"
+		meta mark 0x4312 ct mark set meta mark
+		meta mark 0x4312 counter comment "traffic-stats:xiaomi-pad7-pro:upload"
+		meta mark 0x4313 ct mark set meta mark
+		meta mark 0x4313 counter comment "traffic-stats:iPhone17:upload"
+		meta mark 0x4314 ct mark set meta mark
+		meta mark 0x4314 counter comment "traffic-stats:xiaomi-tubro4-pro:upload"
+	}
+
+	chain prerouting {
+		type filter hook prerouting priority mangle; policy accept;
+
+		ct mark != 0 meta mark set ct mark
+		meta mark 0x4311 counter comment "traffic-stats:windows-LUV:download"
+		meta mark 0x4312 counter comment "traffic-stats:xiaomi-pad7-pro:download"
+		meta mark 0x4313 counter comment "traffic-stats:iPhone17:download"
+		meta mark 0x4314 counter comment "traffic-stats:xiaomi-tubro4-pro:download"
+	}
+}

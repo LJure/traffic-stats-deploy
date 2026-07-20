@@ -1,0 +1,13 @@
+[Unit]
+Description=Install sing-box per-device traffic counters
+Wants=network-online.target
+After=network-online.target
+Before=sing-box.service traffic-stats-collect.service
+
+[Service]
+Type=oneshot
+ExecStart=/usr/sbin/nft -f /etc/traffic-stats/singbox-metering.nft
+RemainAfterExit=yes
+
+[Install]
+WantedBy=multi-user.target
